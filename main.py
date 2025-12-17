@@ -15,12 +15,51 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 TEMPERATURE = float(os.getenv('TEMPERATURE', 0.8))
-SYSTEM_MESSAGE = (
+
+# Twilio <Say> settings (the short message before the media stream starts)
+# Use an Italian voice/language by default to avoid reading Italian text with an en-US voice.
+TWILIO_SAY_VOICE = os.getenv('TWILIO_SAY_VOICE', 'Polly.Bianca')
+TWILIO_SAY_LANGUAGE = os.getenv('TWILIO_SAY_LANGUAGE', 'it-IT')
+SYSTEM_MESSAGE_old = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
     "anything the user is interested in and is prepared to offer them facts. "
     "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
     "Always stay positive, but work in a joke when appropriate."
 )
+SYSTEM_MESSAGE = """Sei la receptionist virtuale di uno studio commercialista italiano a Milano.
+
+RUOLO IMPORTANTE:
+- Sei una receptionist professionale, NON un commercialista
+- NON rispondi a domande fiscali, contabili o legali
+- Il tuo compito è gestire chiamate, appuntamenti e informazioni generali dello studio
+
+LE TUE COMPETENZE:
+- Gestire appuntamenti (prenotare, modificare, cancellare)
+- Mettere in contatto con i commercialisti
+- Fornire informazioni sullo studio (orari, indirizzo, contatti)
+- Raccogliere informazioni da potenziali nuovi clienti
+
+NON devi rispondere a:
+- Domande su tasse, IVA, IRES, detrazioni, scadenze fiscali
+- Consigli contabili o legali
+- Interpretazione di normative
+
+QUANDO TI CHIEDONO QUESTIONI FISCALI:
+Rispondi educatamente che non puoi dare consigli fiscali e suggerisci:
+- Prenotare un appuntamento con un commercialista
+- Parlare direttamente con un professionista dello studio
+
+STILE COMUNICATIVO:
+- Professionale ma cordiale
+- Italiano naturale (madrelingua del Nord Italia)
+- Efficiente e orientata alla soluzione
+
+Esempio di risposta a domanda fiscale:
+"Mi dispiace, non posso fornire consulenza fiscale. Le consiglio di prenotare 
+un appuntamento con uno dei nostri commercialisti che potrà rispondere con 
+precisione alla sua domanda. Vuole che le fissi un appuntamento?"
+"""
+
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
@@ -43,21 +82,37 @@ async def index_page():
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
     response = VoiceResponse()
-    # <Say> punctuation to improve text-to-speech flow
-    response.say(
-        "Please wait while we connect your call to the A. I. voice assistant, powered by Twilio and the Open A I Realtime API",
-        voice="Google.en-US-Chirp3-HD-Aoede"
-    )
-    response.pause(length=1)
     response.say(   
-        "O.K. you can start talking!",
-        voice="Google.en-US-Chirp3-HD-Aoede"
+        "Pronto, Studio Commercialista, desidera?",
+        voice=TWILIO_SAY_VOICE,
+        language=TWILIO_SAY_LANGUAGE,
     )
     host = request.url.hostname
     connect = Connect()
     connect.stream(url=f'wss://{host}/media-stream')
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
+
+
+# Twilio Console / Studio projects often default to these paths.
+# Add aliases to prevent 404s if the webhook URLs are configured with a /voice/* prefix.
+@app.api_route("/voice/incoming", methods=["GET", "POST"])
+async def handle_incoming_call_voice_prefix(request: Request):
+    return await handle_incoming_call(request)
+
+
+@app.api_route("/voice/fallback", methods=["GET", "POST"])
+async def handle_voice_fallback(request: Request):
+    # Keep fallback behavior simple: serve the same TwiML as the primary webhook.
+    return await handle_incoming_call(request)
+
+
+@app.api_route("/voice/status", methods=["GET", "POST"])
+@app.api_route("/voice/statusd", methods=["GET", "POST"])
+async def handle_voice_status(request: Request):
+    # Status callbacks just need a 2xx response.
+    # Accept and ignore payload to avoid noisy 404s in logs.
+    return JSONResponse({"ok": True})
 
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
